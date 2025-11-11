@@ -1,22 +1,30 @@
 package momo3159.scalagit.domain
 
 case class CommitInfo(
-                       hash: String,
-                       size: Int,
-                       parents: Seq[String],
-                       author: String,
-                       committer: String,
-                       message: String
-                     )
+    hash: String,
+    size: Int,
+    parents: Seq[String],
+    author: String,
+    committer: String,
+    message: String
+) {
+  def format: String =
+    s"""
+       |$hash: $committer
+       |parents: ${parents.mkString}
+       |
+       |$message
+       |""".stripMargin
+}
 object CommitInfo {
   class Builder private[CommitInfo] (
-                                      private var hash: Option[String] = None,
-                                      private var size: Option[Int] = None,
-                                      private var parents: Seq[String] = Seq.empty,
-                                      private var author: Option[String] = None,
-                                      private var committer: Option[String] = None,
-                                      private var message: Option[String] = None
-                                    ) {
+      private var hash: Option[String] = None,
+      private var size: Option[Int] = None,
+      private var parents: Seq[String] = Seq.empty,
+      private var author: Option[String] = None,
+      private var committer: Option[String] = None,
+      private var message: Option[String] = None
+  ) {
     def withHash(v: String): Builder = {
       this.hash = Some(v)
       this

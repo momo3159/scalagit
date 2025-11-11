@@ -1,8 +1,9 @@
 package momo3159.scalagit.domain
 
+import momo3159.scalagit.domain.Converter.RichTry
 import momo3159.scalagit.util.{FileUtil, ZlibUtil}
 
-import scala.util.{Try, Success, Failure}
+import scala.util.{Failure, Success, Try}
 
 sealed trait GitObject {
   val hash: String
@@ -10,51 +11,53 @@ sealed trait GitObject {
   val data: String
 }
 object GitObject {
-  private def readObjectHeader(str: String): Either[Throwable, (GitObjectType, Int)] = {
+  private def readObjectHeader(str: String): Either[DomainError, (GitObjectType, Int)] = {
     str.split("\u0000").toSeq match {
       case Seq(header, _) =>
         header.split(" ").toSeq match {
           case Seq(kindStr, sizeStr) =>
             (GitObjectType.fromString(kindStr), Try(sizeStr.toInt)) match {
               case (Success(kind), Success(size)) => Right((kind, size))
-              case (Success(_), Failure(e))       => Left(e)
-              case (Failure(e), Success(_))       => Left(e)
-              case (Failure(e1), Failure(_))      => Left(e1)
+              case (Success(_), Failure(e))       => Left(InvalidValueError("readObjectHeader in GitObject: Failure(sizeStr)", e))
+              case (Failure(e), Success(_))       => Left(InvalidValueError("readObjectHeader in GitObject: Failure(kindStr)", e))
+              case (Failure(e1), Failure(e2)) =>
+                println(e2)
+                Left(InvalidValueError("readObjectHeader in GitObject: Failure(kindStr, sizeStr)", e1))
             }
-          case _ => Left(new RuntimeException("invalid object."))
+          case _ => Left(InvalidValueError(s"readObjectHeader in GitObject: header = $header", new RuntimeException))
         }
-      case _ => Left(new RuntimeException("invalid object."))
+      case _ => Left(InvalidValueError(s"readObjectHeader in GitObject: str = $str", new RuntimeException))
     }
   }
 
-  private def readObjectBody(str: String): Either[Throwable, String] = {
+  private def readObjectBody(str: String): Either[DomainError, String] = {
     str.split("\u0000").toSeq match {
       case Seq(_, body) => Right(body)
-      case _            => Left(new RuntimeException("invalid object."))
+      case _            => Left(InvalidValueError(s"readObjectBody in GitObject: str = $str", new RuntimeException))
     }
   }
 
-  def createFrom(hash: String, gitObjectPath: String): Either[Throwable, GitObject] = {
+  def createFrom(hash: String)(implicit gitObjectPath: ObjectLocation): Either[DomainError, GitObject] = {
     for {
-      path        <- FileUtil.getPath(s"$gitObjectPath/${hash.substring(0, 2)}/${hash.substring(2)}")
+      path        <- FileUtil.getPath(s"${gitObjectPath.value}/${hash.substring(0, 2)}/${hash.substring(2)}")
       bytes       <- FileUtil.readAllBytes(path)
       deflated    <- ZlibUtil.inflate(bytes)
-      deflatedStr <- Try(new String(deflated.toArray)).toEither
+      deflatedStr <- Try(new String(deflated.toArray)).toEitherSystemError("createFrom in GitObject")
       header      <- readObjectHeader(deflatedStr)
       body        <- readObjectBody(deflatedStr)
       gitObject <- header match {
         case (Commit, fileSize) => Right(CommitObject(hash, fileSize, body))
-        case (Tree, fileSize) => Right(TreeObject(hash, fileSize, body))
-        case (Blob, fileSize) => Right(BlobObject(hash, fileSize, body))
-        case (Tag, fileSize)  => Right(TagObject(hash, fileSize, body))
-        case _                => Left(new RuntimeException(s"invalid object: "))
+        case (Tree, fileSize)   => Right(TreeObject(hash, fileSize, body))
+        case (Blob, fileSize)   => Right(BlobObject(hash, fileSize, body))
+        case (Tag, fileSize)    => Right(TagObject(hash, fileSize, body))
+        case _                  => Left(InvalidValueError(s"createFrom in GitObject: header = $header", new RuntimeException))
       }
     } yield gitObject
   }
 }
 
 case class CommitObject(hash: String, size: Int, data: String) extends GitObject {
-  def toCommitInfo: CommitInfo = {
+  private def toCommitInfo: CommitInfo = {
     var builder = data
       .split("\n")
       .foldLeft(CommitInfo.builder.withHash(hash).withSize(size)) { (builder, line) =>
@@ -73,17 +76,17 @@ case class CommitObject(hash: String, size: Int, data: String) extends GitObject
     builder.build()
   }
 
-  def history(gitObjectPath: String): Either[Throwable, Seq[CommitInfo]] = {
-    def loop(hashes: Seq[String], visited: Set[String]): Either[Throwable, Seq[CommitInfo]] =
+  def history()(implicit gitObjectPath: ObjectLocation): Either[DomainError, Seq[CommitInfo]] = {
+    def loop(hashes: Seq[String], visited: Set[String]): Either[DomainError, Seq[CommitInfo]] =
       hashes match {
         case Nil                                    => Right(Seq.empty)
         case hash :: rest if visited.contains(hash) => loop(rest, visited)
         case hash :: rest =>
           for {
-            obj <- GitObject.createFrom(hash, gitObjectPath)
+            obj <- GitObject.createFrom(hash)
             commitInfo <- obj match {
               case v: CommitObject => Right(v.toCommitInfo)
-              case v               => Left(new RuntimeException(""))
+              case v               => Left(SystemError(s"loop in history: $v", new RuntimeException))
             }
             restHistory <- loop(rest ++ commitInfo.parents, visited + hash)
           } yield commitInfo +: restHistory

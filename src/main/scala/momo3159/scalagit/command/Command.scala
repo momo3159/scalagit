@@ -1,17 +1,11 @@
 package momo3159.scalagit.command
 
-import momo3159.scalagit.domain.CommitObject
+import momo3159.scalagit.domain.{CommitObject, DomainError, ObjectLocation}
 
 object Command {
-  def log(root: CommitObject, gitObjectPath: String): Unit =
-    root.history(gitObjectPath) match {
-      case Right(v) =>
-        v.foreach(commitInfo => println(s"""
-                                           |${commitInfo.hash}: ${commitInfo.committer}
-                                           |parents: ${commitInfo.parents.mkString}
-                                           |
-                                           |${commitInfo.message}
-                                           |""".stripMargin))
-      case Left(e) => throw e
+  def log(root: CommitObject)(implicit gitObjectPath: ObjectLocation): Either[DomainError, Unit] =
+    root.history match {
+      case Right(v) => Right(v.foreach(commitInfo => println(commitInfo.format)))
+      case Left(e)  => Left(e)
     }
 }
